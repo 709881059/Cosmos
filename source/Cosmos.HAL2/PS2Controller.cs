@@ -41,7 +41,14 @@ namespace Cosmos.HAL
             All = First | Second | Third | Fourth
         }
 
-        public const byte Ack = 0xFA;
+        private const byte Ack = 0xFA;
+        // Note: according to the docs, this is a valid response when communicating
+        //       with the second PS/2 device.
+        //       The Linux driver calls it NAK, it probably means "not acknowledged"
+        //       This response means that the whole command has to be sent again,
+        //       even if it's the response for the byte argument.
+        private const byte Nak = 0xFE;
+
         public const uint WAIT_TIMEOUT = 100000;
 
         public bool IsDualChannel;
@@ -359,6 +366,33 @@ namespace Cosmos.HAL
         }
 
         /// <summary>
+        /// Waits for the acknowledgement byte (0xFA) or the nak byte (0xFE).
+        /// Returns false if the timeout expires, true otherwise.
+        /// </summary>
+        /// <returns>Returns false if the timeout expires, true otherwise.</returns>
+        public bool WaitForAckOrNak()
+        {
+            int i = 0;
+            byte xByte;
+
+            do
+            {
+                xByte = IO.Data.Byte;
+
+                if (i >= WAIT_TIMEOUT)
+                {
+                    mDebugger.SendInternal("(PS/2 Controller) Timeout expired in PS2Controller.WaitForAckOrNak()");
+                    return false;
+                }
+
+                i++;
+            }
+            while (xByte != Ack && xByte != Nak);
+
+            return xByte == Ack;
+        }
+
+        /// <summary>
         /// Reads the byte after acknowledgement.
         /// </summary>
         /// <returns>The byte read after acknowledgement.</returns>
@@ -433,7 +467,7 @@ namespace Cosmos.HAL
 
             WaitToReadData();
 
-            byte xByte = IO.Data.Byte;
+            var xByte = IO.Data.Byte;
 
             mDebugger.SendInternal("(PS/2 Controller) Device reset reponse byte: " + xByte);
 
@@ -569,7 +603,17 @@ namespace Cosmos.HAL
             WaitToWrite();
             IO.Data.Byte = (byte)aDeviceCommand;
 
-            WaitForAck();
+            if (aSecondPS2Port)
+            {
+                if (!WaitForAckOrNak())
+                {
+                    SendDeviceCommand(aDeviceCommand, aSecondPS2Port, aByte);
+                }
+            }
+            else
+            {
+                WaitForAck();
+            }
 
             mDebugger.SendInternal("Device command sent.");
 
@@ -587,7 +631,17 @@ namespace Cosmos.HAL
                 WaitToWrite();
                 IO.Data.Byte = aByte.Value;
 
-                WaitForAck();
+                if (aSecondPS2Port)
+                {
+                    if (!WaitForAckOrNak())
+                    {
+                        SendDeviceCommand(aDeviceCommand, aSecondPS2Port, aByte);
+                    }
+                }
+                else
+                {
+                    WaitForAck();
+                }
             }
         }
         
